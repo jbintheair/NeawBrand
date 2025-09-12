@@ -320,7 +320,10 @@
             overflow-x: auto;
             overflow-y: hidden;
             -webkit-overflow-scrolling: touch;
+            cursor: grab;
+            user-select: none;
         }
+        .timeline.dragging { cursor: grabbing; }
 
         /* SVG rail overlay */
         .timeline-rail-svg { display: none; }
@@ -502,7 +505,27 @@
         }
 
         /* Scroll indicator */
-        .timeline-scroll-hint { display: none; }
+        .timeline-scroll-hint {
+            position: absolute;
+            top: 50%;
+            left: 15vw; /* more to the left of timeline */
+            transform: translateY(-50%);
+            color: rgba(16, 35, 54, 0.5); /* petrol semi-transparent */
+            font-size: 1.2rem;
+            text-transform: lowercase;
+            letter-spacing: 1px;
+            pointer-events: none;
+            z-index: 1; /* below the fade gradient (z-index: 2) */
+            animation: hint-pulse 2s ease-in-out infinite;
+            transition: opacity 0.5s ease;
+        }
+        .timeline-scroll-hint.hidden {
+            opacity: 0;
+        }
+        @keyframes hint-pulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
 
         @keyframes pulse {
             0%, 100% { opacity: 0.7; }
@@ -785,16 +808,16 @@
         }
 
         .cta-title {
-            font-size: 4rem;
+            font-size: 3.2rem;
             font-weight: 900;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
             text-transform: uppercase;
             letter-spacing: 2px;
         }
 
         .cta-subtitle {
-            font-size: 1.8rem;
-            margin-bottom: 50px;
+            font-size: 1.4rem;
+            margin-bottom: 36px;
             opacity: 0.95;
             line-height: 1.6;
         }
@@ -1180,11 +1203,12 @@
                             <div class="timeline-text">Launch of our new brand.</div>
                         </div>
                     </div>
+                    <div class="timeline-scroll-hint" id="timeline-hint">scroll to explore</div>
                 </div>
                 </div>
             </div>
         </div>
-
+        
         <!-- Slide 5: Experience & Credibility -->
         <div class="slide slide-experience">
             <div class="experience-content">
@@ -1295,7 +1319,7 @@
                     <p class="cta-subtitle" style="margin-bottom: 40px; line-height: 1.8;">
                         That is why we are looking for long-term production partners, capable of delivering high-quality manufacturing and supporting our growth in the coming years.
                     </p>
-                    <p class="cta-subtitle" style="margin-bottom: 60px; font-weight: 700; font-style: italic; font-size: 2rem;">
+                    <p class="cta-subtitle" style="margin-bottom: 40px; font-weight: 700; font-style: italic; font-size: 1.8rem;">
                         We would be delighted to arrange a meeting with you to discuss a potential collaboration.
                     </p>
                 </div>
@@ -1408,11 +1432,48 @@
                 const isActive = slideRect.left === 0 && slideRect.right === window.innerWidth;
                 if (!isActive) return;
                 if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return; // let natural horizontal gestures pass
-                e.preventDefault();
+                    e.preventDefault();
                 timeline.scrollLeft += e.deltaY * 1.2;
             }
 
             window.addEventListener('wheel', onWheel, { passive: false });
+            
+            // Click-and-drag (pointer) horizontal scrolling
+            let isPointerDown = false;
+            let startX = 0;
+            let startScrollLeft = 0;
+            let hasDragged = false;
+
+            function onPointerDown(e) {
+                isPointerDown = true;
+                hasDragged = false;
+                timeline.classList.add('dragging');
+                startX = e.clientX;
+                startScrollLeft = timeline.scrollLeft;
+                // capture pointer to continue receiving events even if leaving element
+                timeline.setPointerCapture?.(e.pointerId);
+            }
+
+            function onPointerMove(e) {
+                if (!isPointerDown) return;
+                const deltaX = e.clientX - startX;
+                if (Math.abs(deltaX) > 2) hasDragged = true;
+                timeline.scrollLeft = startScrollLeft - deltaX;
+            }
+
+            function onPointerUp(e) {
+                if (!isPointerDown) return;
+                isPointerDown = false;
+                timeline.classList.remove('dragging');
+                timeline.releasePointerCapture?.(e.pointerId);
+            }
+
+            timeline.addEventListener('pointerdown', onPointerDown, { passive: true });
+            window.addEventListener('pointermove', onPointerMove, { passive: true });
+            window.addEventListener('pointerup', onPointerUp, { passive: true });
+
+            // Prevent accidental text selection during drag on older browsers
+            timeline.addEventListener('dragstart', (e) => e.preventDefault());
 
             // Compute rail positions using HTML elements
             function computeRail() {
@@ -1460,9 +1521,48 @@
             window.addEventListener('load', recompute);
             window.addEventListener('resize', recompute);
             timeline.addEventListener('scroll', recompute);
-            const ro = new ResizeObserver(recompute);
-            ro.observe(timeline);
+                const ro = new ResizeObserver(recompute);
+                ro.observe(timeline);
             recompute();
+
+            // Hint visibility: hide after first interaction
+            const hint = document.getElementById('timeline-hint');
+            let hintTimer = null;
+            let hasInteracted = false;
+            
+            function hideHint() {
+                if (!hint || hasInteracted) return;
+                hasInteracted = true;
+                hint.classList.add('hidden');
+                if (hintTimer) clearTimeout(hintTimer);
+            }
+            
+            function showHintOnTimelineSlide() {
+                if (!hint) return;
+                const rect = timelineSlide.getBoundingClientRect();
+                const isTimelineVisible = Math.abs(rect.left) < 5 && Math.abs(rect.right - window.innerWidth) < 5;
+                
+                if (isTimelineVisible && !hasInteracted) {
+                    hint.style.visibility = 'visible';
+                    hint.style.opacity = '1';
+                    // Reset timer when timeline becomes visible
+                    if (hintTimer) clearTimeout(hintTimer);
+                    hintTimer = setTimeout(hideHint, 5000);
+                } else {
+                    hint.style.visibility = 'hidden';
+                    hint.style.opacity = '0';
+                }
+            }
+            
+            if (hint) {
+                // Hide on first timeline scroll or drag
+                timeline.addEventListener('scroll', hideHint, { passive: true, once: true });
+                timeline.addEventListener('pointerdown', hideHint, { passive: true, once: true });
+                
+                // Update visibility when slides change
+                showHintOnTimelineSlide();
+                presentation.addEventListener('scroll', showHintOnTimelineSlide, { passive: true });
+            }
         })();
     </script>
 </body>
